@@ -197,3 +197,18 @@ public class RecipeController {
 refer my github to get 
 
 
+3. If and api was given use RestTemplate
+```
+@Service
+public class ApiService {
+
+    @Autowired
+    private RestTemplate restTemplate;
+
+    public ExternalResponse fetchData() {
+        String url = "https://api.example.com/data";
+        return restTemplate.getForObject(url, ExternalResponse.class);
+    }
+}
+
+```
