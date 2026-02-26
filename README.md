@@ -197,7 +197,7 @@ public class RecipeController {
 refer my github to get 
 
 
-3. If and api was given use RestTemplate
+3. If and api was given use RestTemplate u should create this as a particular class file
 ```
 @Service
 public class ApiService {
@@ -208,6 +208,334 @@ public class ApiService {
     public ExternalResponse fetchData() {
         String url = "https://api.example.com/data";
         return restTemplate.getForObject(url, ExternalResponse.class);
+    }
+}
+
+```
+
+This is were u will fetch the api data to db 
+```
+@Service
+public class WeatherService {
+
+    @Autowired
+    private ApiService apiService;
+
+    @Autowired
+    private WeatherRepository weatherRepository;
+
+    public void fetchAndStore() {
+
+        ExternalResponse response = apiService.fetchData();
+
+        WeatherData data = new WeatherData();
+        data.setTemperature(response.getTemp());
+        data.setHumidity(response.getHumidity());
+        data.setTimestamp(LocalDateTime.now());
+
+        weatherRepository.save(data);
+    }
+}
+```
+
+
+ok lets see for an api given how 
+com.example.cve
+
+├── CveApplication.java
+│
+├── config
+│   └── AppConfig.java
+│
+├── controller
+│   └── CveController.java
+│
+├── service
+│   ├── CveService.java
+│   └── NvdApiService.java
+│
+├── repository
+│   └── CveRepository.java
+│
+├── entity
+│   └── Cve.java
+│
+├── dto
+│   ├── CveResponseDto.java
+│   └── NvdResponseDto.java
+│
+├── scheduler
+│   └── CveScheduler.java
+│
+├── exception
+│   └── GlobalExceptionHandler.java
+
+config 
+```
+@Configuration
+public class AppConfig {
+
+    @Bean
+    public RestTemplate restTemplate() {
+        return new RestTemplate();
+    }
+}
+
+
+```
+
+cretate an entity
+```
+@Entity
+@Table(name = "cve")
+public class Cve {
+
+    @Id
+    private String cveId;
+
+    @Column(length = 5000)
+    private String description;
+
+    private Double baseScore;
+
+    private String severity;
+
+    private LocalDate publishedDate;
+
+    private LocalDate lastModifiedDate;
+
+    private Integer year;
+
+    // getters & setters
+}
+```
+repository
+```
+@Repository
+public interface CveRepository extends JpaRepository<Cve, String> {
+
+    Page<Cve> findByYear(Integer year, Pageable pageable);
+
+    Page<Cve> findByBaseScoreGreaterThanEqual(Double score, Pageable pageable);
+
+    Page<Cve> findByLastModifiedDateAfter(LocalDate date, Pageable pageable);
+}
+```
+service layer of nvd api service layer where it fetch and saves it in db
+
+```
+@Service
+public class NvdApiService {
+
+    @Autowired
+    private RestTemplate restTemplate;
+
+    @Autowired
+    private CveRepository cveRepository;
+
+    private final String BASE_URL =
+            "https://services.nvd.nist.gov/rest/json/cves/2.0";
+
+    public void fetchAndStoreCves() {
+
+        int startIndex = 0;
+        int resultsPerPage = 2000;
+        boolean hasMore = true;
+
+        while (hasMore) {
+
+            String url = BASE_URL + "?startIndex=" + startIndex +
+                    "&resultsPerPage=" + resultsPerPage;
+
+            ResponseEntity<NvdResponseDto> response =
+                    restTemplate.getForEntity(url, NvdResponseDto.class);
+
+            List<NvdResponseDto.Vulnerability> list =
+                    response.getBody().getVulnerabilities();
+
+            if (list == null || list.isEmpty()) {
+                hasMore = false;
+            } else {
+
+                for (NvdResponseDto.Vulnerability v : list) {
+
+                    String cveId = v.getCve().getId();
+
+                    Cve entity = new Cve();
+                    entity.setCveId(cveId);
+                    entity.setDescription(v.getCve().getDescriptions().get(0).getValue());
+                    entity.setPublishedDate(
+                        LocalDate.parse(v.getCve().getPublished().substring(0,10))
+                    );
+                    entity.setLastModifiedDate(
+                        LocalDate.parse(v.getCve().getLastModified().substring(0,10))
+                    );
+                    entity.setYear(Integer.parseInt(cveId.substring(4,8)));
+
+                    // Extract score (v3 preferred)
+                    Double score = extractScore(v);
+                    entity.setBaseScore(score);
+
+                    cveRepository.save(entity);
+                }
+
+                startIndex += resultsPerPage;
+            }
+        }
+    }
+
+    private Double extractScore(NvdResponseDto.Vulnerability v) {
+        try {
+            return v.getCve()
+                    .getMetrics()
+                    .getCvssMetricV31()
+                    .get(0)
+                    .getCvssData()
+                    .getBaseScore();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+}
+```
+Businness service layer where u logic to implememt will be given 
+
+```
+@Service
+public class CveService {
+
+    @Autowired
+    private CveRepository cveRepository;
+
+    public Page<Cve> getAll(Pageable pageable) {
+        return cveRepository.findAll(pageable);
+    }
+
+    public Cve getById(String id) {
+        return cveRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("CVE Not Found"));
+    }
+
+    public Page<Cve> getByYear(Integer year, Pageable pageable) {
+        return cveRepository.findByYear(year, pageable);
+    }
+
+    public Page<Cve> getByScore(Double score, Pageable pageable) {
+        return cveRepository.findByBaseScoreGreaterThanEqual(score, pageable);
+    }
+
+    public Page<Cve> getLastModified(int days, Pageable pageable) {
+        LocalDate date = LocalDate.now().minusDays(days);
+        return cveRepository.findByLastModifiedDateAfter(date, pageable);
+    }
+}
+```
+
+controller where u will return all the things to api 
+
+```
+@RestController
+@RequestMapping("/api/cves")
+public class CveController {
+
+    @Autowired
+    private CveService cveService;
+
+    @GetMapping("/list")
+    public Page<Cve> list(Pageable pageable) {
+        return cveService.getAll(pageable);
+    }
+
+    @GetMapping("/{id}")
+    public Cve getById(@PathVariable String id) {
+        return cveService.getById(id);
+    }
+
+    @GetMapping("/year/{year}")
+    public Page<Cve> getByYear(@PathVariable Integer year,
+                               Pageable pageable) {
+        return cveService.getByYear(year, pageable);
+    }
+
+    @GetMapping("/score")
+    public Page<Cve> getByScore(@RequestParam Double min,
+                                Pageable pageable) {
+        return cveService.getByScore(min, pageable);
+    }
+
+    @GetMapping("/last-modified")
+    public Page<Cve> lastModified(@RequestParam int days,
+                                  Pageable pageable) {
+        return cveService.getLastModified(days, pageable);
+    }
+}
+```
+
+here Schedular
+```
+@Component
+public class CveScheduler {
+
+    @Autowired
+    private NvdApiService nvdApiService;
+
+    @Scheduled(cron = "0 0 2 * * ?") // Everyday 2AM
+    public void syncData() {
+        nvdApiService.fetchAndStoreCves();
+    }
+```
+apllication.properties
+```
+spring.datasource.url=jdbc:mysql://localhost:3306/cvedb
+spring.datasource.username=root
+spring.datasource.password=root
+
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+
+spring.jackson.deserialization.fail-on-unknown-properties=false
+```
+
+Nvd response DTO
+```
+@Data
+public class NvdResponseDto {
+
+    private List<Vulnerability> vulnerabilities;
+
+    @Data
+    public static class Vulnerability {
+        private CveData cve;
+    }
+
+    @Data
+    public static class CveData {
+        private String id;
+        private String published;
+        private String lastModified;
+        private List<Description> descriptions;
+        private Metrics metrics;
+    }
+
+    @Data
+    public static class Description {
+        private String value;
+    }
+
+    @Data
+    public static class Metrics {
+        private List<CvssMetricV31> cvssMetricV31;
+    }
+
+    @Data
+    public static class CvssMetricV31 {
+        private CvssData cvssData;
+    }
+
+    @Data
+    public static class CvssData {
+        private Double baseScore;
     }
 }
 
