@@ -540,3 +540,36 @@ public class NvdResponseDto {
 }
 
 ```
+
+json to xml
+
+```
+package com.example.demo.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Service;
+
+import java.io.File;
+
+@Service
+public class JsonToXmlService {
+
+    public void convertJsonFileToXml() throws Exception {
+
+        // Read JSON file from resources
+        ClassPathResource resource = new ClassPathResource("data.json");
+
+        ObjectMapper jsonMapper = new ObjectMapper();
+        Object obj = jsonMapper.readValue(resource.getInputStream(), Object.class);
+
+        // Convert to XML
+        XmlMapper xmlMapper = new XmlMapper();
+        xmlMapper.writerWithDefaultPrettyPrinter()
+                 .writeValue(new File("output.xml"), obj);
+
+        System.out.println("Conversion Completed!");
+    }
+}
+```
